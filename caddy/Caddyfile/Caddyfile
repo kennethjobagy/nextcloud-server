@@ -1,0 +1,166 @@
+# Caddyfile for Nextcloud with Cloudflare Origin Certificates
+# Enhanced security configuration
+
+# Global options block
+{
+    # Disable admin API on external interface for security
+    # Only allow admin API on localhost
+    admin off
+    
+    # Set default ACME email (even though we're using origin certs, good practice)
+    # email your-email@example.com
+}
+
+# Replace cloud.yourdomain.com with your actual domain
+cloud.yourdomain.com {
+    # Use Cloudflare Origin Certificates for SSL/TLS
+    tls /etc/caddy/certs/cloudflare-origin.crt /etc/caddy/certs/cloudflare-origin.key {
+        # Only allow modern TLS versions
+        protocols tls1.2 tls1.3
+    }
+
+    # Block specific user agents (common bots/scanners)
+    @blocked_agents {
+        header User-Agent *sqlmap*
+        header User-Agent *nikto*
+        header User-Agent *masscan*
+        header User-Agent *nmap*
+        header User-Agent *acunetix*
+        header User-Agent *ZmEu*
+    }
+    respond @blocked_agents 403
+
+    # Block requests to sensitive paths that shouldn't be accessed directly
+    @blocked_paths {
+        path /.git/*
+        path /.env
+        path /.htaccess
+        path /config/*
+        path /.user.ini
+    }
+    respond @blocked_paths 404
+
+    # Only allow specific HTTP methods
+    @disallowed_methods {
+        not method GET POST PUT DELETE HEAD OPTIONS PROPFIND MKCOL MOVE COPY
+    }
+    respond @disallowed_methods 405
+
+    # Reverse proxy to Nextcloud container
+    reverse_proxy nextcloud:80 {
+        # Pass the original host header to Nextcloud
+        header_up Host {host}
+        
+        # Pass the real client IP (Cloudflare sends this in CF-Connecting-IP header)
+        header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+        header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+        
+        # Tell Nextcloud the connection is HTTPS
+        header_up X-Forwarded-Proto {scheme}
+        header_up X-Forwarded-Host {host}
+        
+        # Increase timeouts for large file uploads/downloads
+        transport http {
+            read_timeout 300s
+            write_timeout 300s
+            dial_timeout 30s
+            
+            # Add keepalive settings
+            keepalive 90s
+            keepalive_idle_conns 10
+        }
+        
+        # Health check to ensure Nextcloud is responding
+        health_uri /status.php
+        health_interval 30s
+        health_timeout 5s
+    }
+
+    # Enhanced security headers
+    header {
+        # Enable HSTS with longer max-age and preload
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        
+        # Prevent clickjacking
+        X-Frame-Options "SAMEORIGIN"
+        
+        # Prevent MIME type sniffing
+        X-Content-Type-Options "nosniff"
+        
+        # Enable XSS protection (for older browsers)
+        X-XSS-Protection "1; mode=block"
+        
+        # Referrer policy - don't leak referrer info
+        Referrer-Policy "strict-origin-when-cross-origin"
+        
+        # Content Security Policy (basic - Nextcloud has its own CSP)
+        # This is a fallback for paths not handled by Nextcloud
+        Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; media-src 'self'; frame-ancestors 'self';"
+        
+        # Permissions policy - restrict browser features
+        Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=(), usb=(), magnetometer=(), gyroscope=(), accelerometer=()"
+        
+        # Remove server identification
+        -Server
+        -X-Powered-By
+        
+        # Expect-CT header for certificate transparency
+        Expect-CT "enforce, max-age=86400"
+    }
+
+    # More detailed logging with additional fields
+    log {
+        output file /var/log/caddy/nextcloud-access.log {
+            roll_size 10mb
+            roll_keep 5
+            roll_keep_days 7
+        }
+        format json
+        level INFO
+    }
+
+    # Separate error log
+    log {
+        output file /var/log/caddy/nextcloud-error.log {
+            roll_size 10mb
+            roll_keep 3
+        }
+        format json
+        level ERROR
+    }
+
+    # Handle .well-known paths for Nextcloud
+    # Using named matchers with wildcards to catch all variations
+    @carddav path /.well-known/carddav*
+    redir @carddav /remote.php/dav 301
+    
+    @caldav path /.well-known/caldav*
+    redir @caldav /remote.php/dav 301
+    
+    @webfinger path /.well-known/webfinger*
+    redir @webfinger /index.php/.well-known/webfinger 301
+    
+    @nodeinfo path /.well-known/nodeinfo*
+    redir @nodeinfo /index.php/.well-known/nodeinfo 301
+
+    # Encode responses (compression)
+    encode {
+        gzip 6
+        zstd
+        minimum_length 256
+    }
+}
+
+# Optional: Redirect www to non-www (if you want both to work)
+# Uncomment if you want www.cloud.yourdomain.com to redirect to cloud.yourdomain.com
+# www.cloud.yourdomain.com {
+#     tls /etc/caddy/certs/cloudflare-origin.crt /etc/caddy/certs/cloudflare-origin.key
+#     redir https://cloud.yourdomain.com{uri} permanent
+# }
+
+# Optional: Redirect root domain to cloud subdomain
+# Uncomment if you want yourdomain.com to redirect to cloud.yourdomain.com
+# yourdomain.com {
+#     tls /etc/caddy/certs/cloudflare-origin.crt /etc/caddy/certs/cloudflare-origin.key
+#     redir https://cloud.yourdomain.com{uri} permanent
+# }
