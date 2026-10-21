@@ -1,0 +1,129 @@
+# ============================================
+# Custom Fail2ban Jails for Nextcloud Server
+# Monitors Caddy reverse proxy logs
+# ============================================
+
+# --------------------------------------------
+# Default Settings (apply to all jails)
+# --------------------------------------------
+[DEFAULT]
+
+# Ban duration (in seconds)
+# 3600  = 1 hour
+# 7200  = 2 hours
+# 86400 = 24 hours
+bantime = 3600
+
+# Time window for counting failures (in seconds)
+# 600 = 10 minutes
+findtime = 600
+
+# Maximum number of failures before banning
+maxretry = 5
+
+# --------------------------------------------
+# Ban Action
+# --------------------------------------------
+# Using iptables-nft-multiport - best choice for Linux Mint 21+
+# This uses iptables syntax over the nftables backend
+# which matches Linux Mint's default firewall configuration
+# and is fully compatible with Docker's iptables rules
+# --------------------------------------------
+banaction = iptables-nft-multiport
+banaction_allports = iptables-nft-allports
+
+# Log target
+logtarget = /config/log/fail2ban/fail2ban.log
+
+# Whitelist - IPs that will NEVER be banned
+# IMPORTANT: Add your own IP address(es) here!
+ignoreip = 127.0.0.1/8 ::1
+           192.168.0.0/24
+           INSERT_PUBLIC_IP
+
+# Protocol
+protocol = tcp
+
+# Chain name for iptables
+chain = INPUT
+
+# --------------------------------------------
+# Caddy - Failed Authentication (401 errors)
+# Catches brute force login attempts
+# Strict: only 3 attempts before 2 hour ban
+# --------------------------------------------
+[caddy-auth]
+enabled = true
+port = http,https
+filter = caddy-auth
+logpath = /var/log/caddy/nextcloud-access.log
+maxretry = 3
+findtime = 600
+bantime = 7200
+
+# --------------------------------------------
+# Caddy - Exploit & Vulnerability Scanning
+# Catches attempts to access sensitive files
+# --------------------------------------------
+[caddy-exploit]
+enabled = true
+port = http,https
+filter = caddy-exploit
+logpath = /var/log/caddy/nextcloud-access.log
+maxretry = 5
+findtime = 600
+bantime = 3600
+
+# --------------------------------------------
+# Caddy - Excessive 404 Errors
+# Catches scanning/probing behavior
+# --------------------------------------------
+[caddy-404]
+enabled = true
+port = http,https
+filter = caddy-404
+logpath = /var/log/caddy/nextcloud-access.log
+maxretry = 10
+findtime = 600
+bantime = 3600
+
+# --------------------------------------------
+# Caddy - Malicious Bots/Scanners
+# Catches known malicious user agents
+# Very strict: 1 hit = 24 hour ban
+# --------------------------------------------
+[caddy-baduseragent]
+enabled = true
+port = http,https
+filter = caddy-baduseragent
+logpath = /var/log/caddy/nextcloud-access.log
+maxretry = 1
+findtime = 600
+bantime = 86400
+
+# --------------------------------------------
+# Caddy - Request Flooding (DoS/DDoS)
+# Catches excessive request rates
+# --------------------------------------------
+[caddy-limit-req]
+enabled = true
+port = http,https
+filter = caddy-limit-req
+logpath = /var/log/caddy/nextcloud-access.log
+maxretry = 100
+findtime = 60
+bantime = 3600
+
+# --------------------------------------------
+# Optional: SSH Brute Force Protection
+# Uncomment if you have SSH exposed
+# Requires mounting /var/log from host
+# --------------------------------------------
+# [sshd]
+# enabled = true
+# port = ssh
+# filter = sshd
+# logpath = /var/log/host/auth.log
+# maxretry = 3
+# findtime = 600
+# bantime = 86400
