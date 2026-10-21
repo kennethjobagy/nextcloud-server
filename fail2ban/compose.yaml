@@ -1,0 +1,88 @@
+# Fail2ban - Intrusion Prevention System
+# Monitors Caddy logs and bans malicious IPs
+# Simple, reliable protection for Nextcloud server
+
+services:
+  fail2ban:
+    # Using LinuxServer.io's Fail2ban image
+    image: lscr.io/linuxserver/fail2ban:latest
+    container_name: fail2ban
+    
+    # Restart policy - always restart unless manually stopped
+    restart: unless-stopped
+    
+    # Security options
+    security_opt:
+      # Prevent privilege escalation
+      - no-new-privileges:true
+    
+    # Network mode - use host network to manage iptables
+    # This is REQUIRED for Fail2ban to ban IPs using iptables
+    network_mode: host
+    
+    # Capabilities needed for iptables/firewall management
+    cap_add:
+      # Required to modify network rules
+      - NET_ADMIN
+      # Required to use raw sockets
+      - NET_RAW
+    
+    # Resource limits
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: 0.5
+    
+    environment:
+      # System settings - match your user/group
+      - PUID=1000
+      - PGID=1000
+      
+      # Timezone
+      - TZ=America/Edmonton
+      
+      # Fail2ban verbosity level
+      # Options: -v (INFO), -vv (DEBUG), default is WARNING
+      - VERBOSITY=-vv
+    
+    volumes:
+      # Fail2ban persistent data (bans database, internal config)
+      - fail2ban_data:/config
+      
+      # Main jail configuration file
+      # Maps directly to /config/jail.local inside container
+      - ./jail.local:/config/jail.local:ro
+      
+      # Custom filter files
+      # Maps to /config/fail2ban/filter.d/ inside container
+      - ./filter.d:/config/fail2ban/filter.d:ro
+      
+      # Caddy access logs (read-only)
+      # Path must match your Caddy setup
+      - ../../caddy/logs:/var/log/caddy:ro
+      
+      # Optional: System logs for SSH protection
+      # Uncomment if you want to monitor SSH, system auth, etc.
+      # - /var/log:/var/log/host:ro
+    
+    # Health check - verify Fail2ban is running
+    healthcheck:
+      test: ["CMD-SHELL", "fail2ban-client ping || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service=fail2ban"
+        compress: "true"
+
+# Volumes
+volumes:
+  # Fail2ban persistent data (bans database, internal config)
+  fail2ban_data:
+    name: fail2ban_data
