@@ -1,0 +1,231 @@
+# Nextcloud Stack - LinuxServer.io Image
+# Complete stack with Nextcloud, MariaDB, and Redis
+# Configured for use with Caddy reverse proxy
+# User data stored at: /home/username/nextcloud_data
+#
+# Passwords and sensitive values are stored in .env file
+# Make sure to set permissions: chmod 600 .env
+
+services:
+  # =========================================
+  # Nextcloud Application
+  # =========================================
+  nextcloud:
+    image: lscr.io/linuxserver/nextcloud:latest
+    container_name: nextcloud
+    
+    restart: unless-stopped
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    
+    mem_limit: 2g
+    mem_reservation: 512m
+    cpus: 2.0
+    
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - DB_TYPE=mysql
+      - DB_HOST=mariadb
+      - DB_PORT=3306
+      - DB_NAME=${MYSQL_DATABASE}
+      - DB_USER=${MYSQL_USER}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - NEXTCLOUD_TRUSTED_DOMAINS=${NEXTCLOUD_DOMAIN}
+      - OVERWRITEPROTOCOL=https
+      - OVERWRITEHOST=${NEXTCLOUD_DOMAIN}
+      - OVERWRITECLIURL=https://${NEXTCLOUD_DOMAIN}
+      - TRUSTED_PROXIES=${TRUSTED_PROXIES}
+      - PHP_MEMORY_LIMIT=${PHP_MEMORY_LIMIT}
+      - PHP_UPLOAD_LIMIT=${PHP_UPLOAD_LIMIT}
+    
+    volumes:
+      # Nextcloud configuration (named volume for security)
+      - nextcloud_config:/config
+      
+      # Nextcloud user data (bind mount - path set in .env file)
+      - ${NEXTCLOUD_DATA_PATH}:/data
+    
+    networks:
+      - caddy_net
+      - nextcloud_backend
+    
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/status.php"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "service=nextcloud"
+        compress: "true"
+
+  # =========================================
+  # MariaDB Database
+  # =========================================
+  mariadb:
+    image: lscr.io/linuxserver/mariadb:latest
+    container_name: nextcloud-mariadb
+    
+    restart: unless-stopped
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    
+    mem_limit: 1g
+    mem_reservation: 256m
+    cpus: 1.0
+    
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    
+    volumes:
+      - mariadb_data:/config
+    
+    networks:
+      - nextcloud_backend
+    
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+        labels: "service=mariadb"
+        compress: "true"
+
+  # =========================================
+  # Redis Cache
+  # =========================================
+  redis:
+    image: redis:alpine
+    container_name: nextcloud-redis
+    
+    restart: unless-stopped
+    
+    security_opt:
+      - no-new-privileges:true
+    
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    
+    # Non-root user provides sufficient security without read_only risks
+    user: "999:999"
+    
+    # read_only removed - non-root + dropped capabilities provides sufficient security
+    # read_only: true caused potential write conflicts with Redis log/pid files
+    
+    environment:
+      - TZ=${TZ}
+    
+    volumes:
+      # Redis data for persistence (named volume)
+      - redis_data:/data
+    
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    
+    networks:
+      - nextcloud_backend
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    mem_limit: 512m
+    mem_reservation: 128m
+    cpus: 0.5
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+        labels: "service=redis"
+        compress: "true"
+
+# =========================================
+# Named Volumes
+# =========================================
+volumes:
+  # Nextcloud configuration files (named volume)
+  nextcloud_config:
+    name: nextcloud_config
+  
+  # Note: nextcloud data is a bind mount defined in .env as NEXTCLOUD_DATA_PATH
+  
+  # MariaDB database files (named volume)
+  mariadb_data:
+    name: mariadb_data
+  
+  # Redis cache data (named volume)
+  redis_data:
+    name: redis_data
+
+# =========================================
+# Networks
+# =========================================
+networks:
+  # External network shared with Caddy (for reverse proxy)
+  caddy_net:
+    external: true
+  
+  # Internal backend network (database and Redis only)
+  nextcloud_backend:
+    name: nextcloud_backend
+    internal: true
