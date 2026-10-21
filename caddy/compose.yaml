@@ -1,0 +1,127 @@
+# Caddy Reverse Proxy
+# This service acts as a reverse proxy for Nextcloud and handles SSL/TLS termination
+# using Cloudflare Origin Certificates
+#
+# Storage Strategy:
+# - Bind mounts: Files requiring regular access (Caddyfile, certs, logs)
+# - Named volumes: Data requiring isolation and protection (data, config)
+
+services:
+  caddy:
+    # Using the official Caddy image
+    image: caddy:latest
+    container_name: caddy
+    
+    # Restart policy - always restart unless manually stopped
+    restart: unless-stopped
+    
+    # Run as non-root user for additional security
+    # Caddy image uses UID/GID 1000 by default
+    user: "1000:1000"
+    
+    # Security options
+    security_opt:
+      # Disable new privileges
+      - no-new-privileges:true
+    
+    # Capabilities - drop all and only add what's needed
+    cap_drop:
+      - ALL
+    cap_add:
+      # Need NET_BIND_SERVICE to bind to ports 80 and 443
+      - NET_BIND_SERVICE
+    
+    # Read-only root filesystem (improves security)
+    read_only: true
+    
+    # Temporary filesystems for runtime data
+    tmpfs:
+      - /tmp
+      - /var/tmp
+    
+    ports:
+      # HTTP port - used for HTTP to HTTPS redirects
+      - "80:80"
+      # HTTPS port - main entry point for encrypted traffic
+      - "443:443"
+      # Admin API disabled in Caddyfile, so port 2019 not needed
+    
+    volumes:
+      # === BIND MOUNTS (for files requiring regular access) ===
+      
+      # Bind mount for Caddyfile - allows easy editing without rebuilding
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      
+      # Bind mount for Cloudflare origin certificates (read-only)
+      - ./certs:/etc/caddy/certs:ro
+      
+      # Bind mount for access logs (for troubleshooting and Fail2ban)
+      - ./logs:/var/log/caddy
+      
+      # === NAMED VOLUMES (for data requiring isolation) ===
+      
+      # Named volume for Caddy's data (certificates, OCSP staples, etc.)
+      - caddy_data:/data
+      
+      # Named volume for Caddy's config (auto-generated configuration)
+      - caddy_config:/config
+    
+    networks:
+      # External network shared with Nextcloud
+      - caddy_net
+    
+    # Environment variables
+    environment:
+      # Set timezone
+      - TZ=America/Edmonton
+    
+    # Health check to ensure Caddy is running properly
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    
+    # Resource limits to prevent resource exhaustion
+    deploy:
+      resources:
+        limits:
+          # Limit CPU usage
+          cpus: '1.0'
+          # Limit memory usage
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    
+    # Logging configuration for troubleshooting
+    logging:
+      driver: "json-file"
+      options:
+        # Maximum size of each log file
+        max-size: "10m"
+        # Maximum number of log files to keep
+        max-file: "5"
+        # Add labels to log entries for easier filtering
+        labels: "service=caddy"
+        # Compress rotated logs
+        compress: "true"
+
+# Named volumes for persistent data (Docker-managed for security)
+volumes:
+  # Stores Caddy's data directory (certificates, OCSP staples, etc.)
+  caddy_data:
+    name: caddy_data
+  
+  # Stores Caddy's config directory (auto-generated configuration)
+  caddy_config:
+    name: caddy_config
+
+# Networks
+networks:
+  # External network shared with Nextcloud and other services
+  # Must be created before starting: docker network create caddy_net
+  caddy_net:
+    external: true
+
